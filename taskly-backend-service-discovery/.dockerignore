@@ -1,0 +1,10 @@
+target
+logs
+.git
+*.md
+.env*
+!.env.example
+.idea
+.vscode
+.mvn/wrapper/maven-wrapper.jar
+public/images/users/avatar-*

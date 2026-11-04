@@ -1,0 +1,68 @@
+spring:
+  application:
+    name: ${APP_NAME:taskly-api}
+  config:
+    import: optional:file:.env[.properties]
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USER}
+    password: ${DATABASE_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DATABASE_POOL_MAX:10}
+      connection-timeout: ${DATABASE_TIMEOUT:30000}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  servlet:
+    multipart:
+      max-file-size: ${taskly.storage.avatar-max-size}
+      max-request-size: 3MB
+  web:
+    resources:
+      static-locations: file:${taskly.storage.public-dir}/
+
+server:
+  address: ${APP_HOST:0.0.0.0}
+  port: ${APP_PORT:8080}
+  shutdown: graceful
+  error:
+    whitelabel:
+      enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+logging:
+  level:
+    com.taskly: ${LOG_LEVEL:debug}
+  file:
+    name: ${LOG_FILE:logs/taskly-api.log}
+  logback:
+    rollingpolicy:
+      max-file-size: 20MB
+      max-history: 14
+
+taskly:
+  app:
+    level: ${APP_LEVEL:development}
+  client-url: ${CLIENT_URL:http://localhost:3000}
+  auth:
+    secret: ${AUTH_SECRET:}
+    token-ttl: 1h
+    cookie-name: taskly_token
+    cookie-domain: ${COOKIE_DOMAIN:}
+    bcrypt-rounds: ${BCRYPT_ROUNDS:10}
+  storage:
+    public-dir: ${PUBLIC_DIR:public}
+    avatar-max-size: 2MB
+  seed:
+    enabled: ${SEED_ENABLED:false}
+    allow-production: ${SEED_ALLOW_PRODUCTION:false}
