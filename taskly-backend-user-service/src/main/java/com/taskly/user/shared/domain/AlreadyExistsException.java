@@ -1,0 +1,8 @@
+package com.taskly.user.shared.domain;
+
+public class AlreadyExistsException extends DomainException {
+
+	public AlreadyExistsException(String message) {
+		super(message, "ALREADY_EXISTS");
+	}
+}

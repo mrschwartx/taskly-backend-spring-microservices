@@ -1,8 +1,20 @@
 {
     "folders": [
         {
-            "name": "taskly-backend",
-            "path": "taskly-backend"
+            "name": "taskly-backend-api-gateway",
+            "path": "taskly-backend-api-gateway"
+        },
+        {
+            "name": "taskly-backend-service-discovery",
+            "path": "taskly-backend-service-discovery"
+        },
+        {
+            "name": "taskly-backend-user-service",
+            "path": "taskly-backend-user-service"
+        },
+        {
+            "name": "taskly-backend-task-service",
+            "path": "taskly-backend-task-service"
         },
         {
             "name": "taskly-docker",

@@ -1,44 +1,190 @@
+x-service-environment: &service-environment
+  EUREKA_URL: http://taskly-discovery:8761/eureka
+  TRACING_ENABLED: ${TRACING_ENABLED:-false}
+  OTLP_TRACES_ENDPOINT: http://taskly-lgtm:4318/v1/traces
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
+
 services:
-  taskly-postgres:
+  taskly-user-db:
     image: postgres:18.3
-    container_name: taskly-postgres
+    container_name: taskly-user-db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_NAME:-taskly}
-      POSTGRES_USER: ${DB_USER:-taskly}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required, run make docker/env}
+      POSTGRES_DB: ${USER_DB_NAME:-taskly_users}
+      POSTGRES_USER: ${USER_DB_USER:-taskly_user}
+      POSTGRES_PASSWORD: ${USER_DB_PASSWORD:?USER_DB_PASSWORD is required, run make docker/env}
     volumes:
-      - taskly-postgres-data:/var/lib/postgresql
+      - taskly-user-db-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 20
 
-  taskly-backend:
-    build:
-      context: ../taskly-backend
-      dockerfile: ../taskly-docker/taskly-backend/Dockerfile
-    image: taskly-backend:local
-    container_name: taskly-backend
+  taskly-task-db:
+    image: postgres:18.3
+    container_name: taskly-task-db
     restart: unless-stopped
     environment:
-      APP_LEVEL: ${APP_LEVEL:-development}
-      DATABASE_URL: jdbc:postgresql://taskly-postgres:5432/${DB_NAME:-taskly}
-      DATABASE_USER: ${DB_USER:-taskly}
-      DATABASE_PASSWORD: ${DB_PASSWORD}
-      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required, run make docker/env}
-      CLIENT_URL: ${CLIENT_URL:-http://localhost:3000}
-      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
+      POSTGRES_DB: ${TASK_DB_NAME:-taskly_tasks}
+      POSTGRES_USER: ${TASK_DB_USER:-taskly_task}
+      POSTGRES_PASSWORD: ${TASK_DB_PASSWORD:?TASK_DB_PASSWORD is required, run make docker/env}
+    volumes:
+      - taskly-task-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  taskly-kafka:
+    image: apache/kafka:4.0.0
+    container_name: taskly-kafka
+    restart: unless-stopped
+    environment:
+      CLUSTER_ID: 5L6g3nShT-eMCtK--X86sw
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://taskly-kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@taskly-kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      - taskly-kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
+  taskly-redis:
+    image: redis:7.4-alpine
+    container_name: taskly-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  taskly-discovery:
+    build:
+      context: ../taskly-backend-service-discovery
+    image: taskly-service-discovery:local
+    container_name: taskly-discovery
+    restart: unless-stopped
+    environment:
+      EUREKA_HOSTNAME: taskly-discovery
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
     ports:
-      - "${PORT:-8080}:8080"
+      - "8761:8761"
+
+  taskly-user-service:
+    build:
+      context: ../taskly-backend-user-service
+    image: taskly-user-service:local
+    container_name: taskly-user-service
+    restart: unless-stopped
+    environment:
+      <<: *service-environment
+      APP_LEVEL: ${APP_LEVEL:-development}
+      DATABASE_URL: jdbc:postgresql://taskly-user-db:5432/${USER_DB_NAME:-taskly_users}
+      DATABASE_USER: ${USER_DB_USER:-taskly_user}
+      DATABASE_PASSWORD: ${USER_DB_PASSWORD}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required, run make docker/env}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      KAFKA_BOOTSTRAP_SERVERS: taskly-kafka:9092
     volumes:
       - taskly-avatars:/app/public/images/users
     depends_on:
-      taskly-postgres:
+      taskly-user-db:
+        condition: service_healthy
+      taskly-kafka:
+        condition: service_healthy
+      taskly-discovery:
         condition: service_healthy
 
+  taskly-task-service:
+    build:
+      context: ../taskly-backend-task-service
+    image: taskly-task-service:local
+    container_name: taskly-task-service
+    restart: unless-stopped
+    environment:
+      <<: *service-environment
+      DATABASE_URL: jdbc:postgresql://taskly-task-db:5432/${TASK_DB_NAME:-taskly_tasks}
+      DATABASE_USER: ${TASK_DB_USER:-taskly_task}
+      DATABASE_PASSWORD: ${TASK_DB_PASSWORD}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required, run make docker/env}
+      KAFKA_BOOTSTRAP_SERVERS: taskly-kafka:9092
+    depends_on:
+      taskly-task-db:
+        condition: service_healthy
+      taskly-kafka:
+        condition: service_healthy
+      taskly-discovery:
+        condition: service_healthy
+
+  taskly-gateway:
+    build:
+      context: ../taskly-backend-api-gateway
+    image: taskly-api-gateway:local
+    container_name: taskly-gateway
+    restart: unless-stopped
+    environment:
+      <<: *service-environment
+      CLIENT_URL: ${CLIENT_URL:-http://localhost:3000}
+      REDIS_HOST: taskly-redis
+    ports:
+      - "${PORT:-8080}:8080"
+    depends_on:
+      taskly-redis:
+        condition: service_healthy
+      taskly-discovery:
+        condition: service_healthy
+      taskly-user-service:
+        condition: service_healthy
+      taskly-task-service:
+        condition: service_healthy
+
+  taskly-lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: taskly-lgtm
+    profiles: ["observability"]
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - taskly-lgtm-data:/data
+
+  taskly-alloy:
+    image: grafana/alloy:latest
+    container_name: taskly-alloy
+    profiles: ["observability"]
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - taskly-lgtm
+
 volumes:
-  taskly-postgres-data:
+  taskly-user-db-data:
+  taskly-task-db-data:
+  taskly-kafka-data:
   taskly-avatars:
+  taskly-lgtm-data:

@@ -1,6 +1,6 @@
 spring:
   application:
-    name: ${APP_NAME:taskly-api}
+    name: task-service
   config:
     import: optional:file:.env[.properties]
   datasource:
@@ -9,7 +9,11 @@ spring:
     password: ${DATABASE_PASSWORD}
     hikari:
       maximum-pool-size: ${DATABASE_POOL_MAX:10}
-      connection-timeout: ${DATABASE_TIMEOUT:30000}
+      connection-timeout: ${DATABASE_TIMEOUT:5000}
+      validation-timeout: 3000
+      data-source-properties:
+        connectTimeout: 5
+        socketTimeout: 15
   jpa:
     open-in-view: false
     hibernate:
@@ -18,51 +22,112 @@ spring:
       hibernate:
         jdbc:
           time_zone: UTC
-  servlet:
-    multipart:
-      max-file-size: ${taskly.storage.avatar-max-size}
-      max-request-size: 3MB
-  web:
-    resources:
-      static-locations: file:${taskly.storage.public-dir}/
+      jakarta:
+        persistence:
+          query:
+            timeout: 5000
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
+    admin:
+      auto-create: ${KAFKA_ADMIN_AUTO_CREATE:true}
+      fail-fast: false
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP:task-service}
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        session.timeout.ms: 30000
+        max.poll.interval.ms: 300000
+        request.timeout.ms: 10000
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
+        max.block.ms: 5000
+    listener:
+      ack-mode: record
+      concurrency: ${KAFKA_LISTENER_CONCURRENCY:3}
+      observation-enabled: true
+    template:
+      observation-enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
 
 server:
   address: ${APP_HOST:0.0.0.0}
-  port: ${APP_PORT:8080}
+  port: ${APP_PORT:8082}
   shutdown: graceful
   error:
     whitelabel:
       enabled: false
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    registry-fetch-interval-seconds: 10
+    eureka-server-connect-timeout-seconds: 2
+    eureka-server-read-timeout-seconds: 4
+    healthcheck:
+      enabled: true
+  instance:
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+    instance-id: ${spring.application.name}:${spring.cloud.client.ip-address}:${server.port}
 
 management:
   endpoints:
     web:
       exposure:
         include: health
+  tracing:
+    enabled: ${TRACING_ENABLED:true}
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+          timeout: 2s
+  otlp:
+    metrics:
+      export:
+        enabled: false
 
 logging:
   level:
     com.taskly: ${LOG_LEVEL:debug}
+  pattern:
+    correlation: "[${spring.application.name},%X{traceId:-},%X{spanId:-},%X{correlationId:-}] "
   file:
-    name: ${LOG_FILE:logs/taskly-api.log}
+    name: ${LOG_FILE:logs/task-service.log}
   logback:
     rollingpolicy:
       max-file-size: 20MB
       max-history: 14
 
 taskly:
-  app:
-    level: ${APP_LEVEL:development}
-  client-url: ${CLIENT_URL:http://localhost:3000}
   auth:
     secret: ${AUTH_SECRET:}
-    token-ttl: 1h
     cookie-name: taskly_token
-    cookie-domain: ${COOKIE_DOMAIN:}
-    bcrypt-rounds: ${BCRYPT_ROUNDS:10}
-  storage:
-    public-dir: ${PUBLIC_DIR:public}
-    avatar-max-size: 2MB
-  seed:
-    enabled: ${SEED_ENABLED:false}
-    allow-production: ${SEED_ALLOW_PRODUCTION:false}
+  messaging:
+    user-events-topic: ${USER_EVENTS_TOPIC:taskly.user.events}
+    partitions: ${KAFKA_TOPIC_PARTITIONS:3}
+    replicas: ${KAFKA_TOPIC_REPLICAS:1}
+    retry:
+      max-retries: 5
+      initial-interval: 500ms
+      max-interval: 10s
+      multiplier: 2.0
+  tombstones:
+    retention: 48h
+    purge-interval-ms: 3600000

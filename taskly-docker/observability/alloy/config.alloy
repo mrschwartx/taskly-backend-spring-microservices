@@ -1,0 +1,38 @@
+discovery.docker "taskly" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "taskly" {
+  targets = discovery.docker.taskly.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/taskly-.*"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "taskly" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.taskly.output
+  refresh_interval = "5s"
+  forward_to       = [loki.write.lgtm.receiver]
+}
+
+loki.write "lgtm" {
+  endpoint {
+    url = "http://taskly-lgtm:3100/loki/api/v1/push"
+  }
+}

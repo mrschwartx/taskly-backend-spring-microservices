@@ -1,8 +1,7 @@
 MVN = ./mvnw
-JAR = target/taskly-backend.jar
-SEED_ARGS = --spring.main.web-application-type=none --taskly.seed.enabled=true
+JAR = target/taskly-task-service.jar
 
-.PHONY: env secret-key dev build run test verify seed clean
+.PHONY: env secret-key dev build run test verify clean
 
 env:
 	@test -f .env || { cp .env.example .env && echo "Created .env from .env.example"; }
@@ -24,9 +23,6 @@ test:
 
 verify:
 	$(MVN) verify
-
-seed: build
-	java -jar $(JAR) $(SEED_ARGS)
 
 clean:
 	$(MVN) clean

@@ -14,12 +14,20 @@ concurrency:
 
 jobs:
   taskly-build:
-    name: taskly code build
+    name: build ${{ matrix.service }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - taskly-backend-service-discovery
+          - taskly-backend-api-gateway
+          - taskly-backend-user-service
+          - taskly-backend-task-service
     defaults:
       run:
-        working-directory: taskly-backend
+        working-directory: ${{ matrix.service }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -27,16 +35,25 @@ jobs:
           distribution: temurin
           java-version: 25
           cache: maven
+          cache-dependency-path: ${{ matrix.service }}/pom.xml
       - run: ./mvnw -B -ntp -DskipTests verify
 
   taskly-test:
-    name: taskly code tests
+    name: test ${{ matrix.service }}
     runs-on: ubuntu-latest
     needs: [taskly-build]
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - taskly-backend-service-discovery
+          - taskly-backend-api-gateway
+          - taskly-backend-user-service
+          - taskly-backend-task-service
     defaults:
       run:
-        working-directory: taskly-backend
+        working-directory: ${{ matrix.service }}
     services:
       postgres:
         image: postgres:18.3
@@ -60,13 +77,14 @@ jobs:
           distribution: temurin
           java-version: 25
           cache: maven
+          cache-dependency-path: ${{ matrix.service }}/pom.xml
       - run: ./mvnw -B -ntp verify
 
   taskly-docker:
-    name: taskly docker container
+    name: taskly docker stack
     runs-on: ubuntu-latest
     needs: [taskly-test]
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: taskly-docker
@@ -77,24 +95,24 @@ jobs:
         run: make docker/env
       - name: Start stack
         run: make docker/up
-      - name: Check health endpoint
+      - name: Check gateway
         run: curl -fsS http://localhost:8080/
-      - name: Check API
+      - name: Check service registry
         run: |
-          curl -fsS -X POST http://localhost:8080/api/v1/auth/signup \
-            -H 'Content-Type: application/json' \
-            -d '{"username":"ci_user","email":"ci_user@mail.com","password":"CiPassword123"}'
+          curl -fsS -H 'Accept: application/json' http://localhost:8761/eureka/apps | grep -q USER-SERVICE
+          curl -fsS -H 'Accept: application/json' http://localhost:8761/eureka/apps | grep -q TASK-SERVICE
       - name: Check seed
         run: make docker/seed
+      - name: End to end smoke test
+        run: make docker/smoke
       - name: Show logs on failure
         if: failure()
         run: |
           docker compose -f docker-compose.local.yml ps -a
-          docker inspect --format '{{json .State.Health}}' taskly-backend
-          echo "=== backend logs"
-          docker logs taskly-backend 2>&1 | tail -n 100
-          echo "=== postgres logs"
-          docker logs taskly-postgres 2>&1 | tail -n 30
+          for container in taskly-gateway taskly-user-service taskly-task-service taskly-discovery taskly-kafka; do
+            echo "=== $container logs"
+            docker logs $container 2>&1 | tail -n 80
+          done
       - name: Stop stack
         if: always()
         run: docker compose -f docker-compose.local.yml down -v
